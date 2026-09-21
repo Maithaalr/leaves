@@ -1255,54 +1255,62 @@ if uploaded_file is not None:
                         ]
                         .copy()
                     )
+                    def convert_date_column(series):
+                        """
+                        تحويل التاريخ من DD/MM/YYYY إلى datetime
+                        مثال:
+                        22/04/2024
+                        """
 
-                    # عرض التاريخ بصيغة واضحة
-                    if (
-                        "من تاريخ"
-                        in detail_df.columns
-                    ):
-
-                        detail_df[
-                            "من تاريخ"
-                        ] = (
-                            detail_df[
-                                "من تاريخ"
-                            ]
-                            .dt.strftime(
-                                "%d/%m/%Y"
+    # إذا Excel قارئ العمود أصلاً كتاريخ
+                        if pd.api.types.is_datetime64_any_dtype(series):
+                            return pd.to_datetime(
+                                series,
+                                errors="coerce"
                             )
+
+                        # تحويل إلى نص
+                        cleaned = series.astype("string")
+
+                        # تنظيف جميع الرموز المخفية
+                        cleaned = (
+                            cleaned
+                            .str.replace("\u202a", "", regex=False)
+                            .str.replace("\u202b", "", regex=False)
+                            .str.replace("\u202c", "", regex=False)
+                            .str.replace("\u200e", "", regex=False)
+                            .str.replace("\u200f", "", regex=False)
+                            .str.replace("\ufeff", "", regex=False)
+                            .str.replace("\xa0", "", regex=False)
+                            .str.strip()
                         )
 
-                    if (
-                        "الى تاريخ"
-                        in detail_df.columns
-                    ):
-
-                        detail_df[
-                            "الى تاريخ"
-                        ] = (
-                            detail_df[
-                                "الى تاريخ"
-                            ]
-                            .dt.strftime(
-                                "%d/%m/%Y"
-                            )
+                        # الاحتفاظ فقط بالأرقام و /
+                        cleaned = cleaned.str.replace(
+                            r"[^\d/]",
+                            "",
+                            regex=True
                         )
 
-                    st.dataframe(
-                        detail_df,
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                        # تحويل التاريخ بالصيغة المحددة
+                        converted = pd.to_datetime(
+                            cleaned,
+                            format="%d/%m/%Y",
+                            errors="coerce"
+                        )
+
+                        return converted
+
+# =====================================================
+  # معالجة الأخطاء
+ # =====================================================
+
+        except Exception as e:
 
 
-    # =====================================================
-    # معالجة الأخطاء
-    # =====================================================
-    except Exception as e:
+         st.error(
 
-        st.error(
-            "حدث خطأ أثناء قراءة أو تحليل الملف."
+        "حدث خطأ أثناء قراءة أو تحليل الملف."
         )
 
         st.exception(e)
