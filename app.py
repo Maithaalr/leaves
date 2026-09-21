@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+
 # =========================================================
 # إعداد الصفحة
 # =========================================================
@@ -16,15 +17,84 @@ st.caption("تحليل بيانات الإجازات والأذونات للدو
 
 
 # =========================================================
-# دوال مساعدة
+# دالة تنظيف النصوص
+# =========================================================
+def clean_text_series(series):
+    """
+    تنظيف النصوص من المسافات والعلامات المخفية
+    """
+
+    return (
+        series
+        .astype("string")
+        .str.replace("\u202a", "", regex=False)
+        .str.replace("\u202b", "", regex=False)
+        .str.replace("\u202c", "", regex=False)
+        .str.replace("\u200e", "", regex=False)
+        .str.replace("\u200f", "", regex=False)
+        .str.replace("\ufeff", "", regex=False)
+        .str.strip()
+    )
+
+
+# =========================================================
+# دالة تحويل التاريخ
+# =========================================================
+def convert_date_column(series):
+    """
+    تنظيف وتحويل التاريخ إلى datetime
+    يدعم قيم مثل:
+    22/04/2024
+    ‭22/04/2024‬
+    """
+
+    # إذا Excel قرأ التاريخ أصلاً كـ datetime
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return pd.to_datetime(
+            series,
+            errors="coerce"
+        )
+
+    # تنظيف النص
+    cleaned = clean_text_series(series)
+
+    # استبدال القيم الفارغة
+    cleaned = cleaned.replace(
+        ["", "nan", "NaN", "None", "<NA>"],
+        pd.NA
+    )
+
+    # تحويل التاريخ
+    converted = pd.to_datetime(
+        cleaned,
+        errors="coerce",
+        dayfirst=True
+    )
+
+    return converted
+
+
+# =========================================================
+# تنظيف وتجهيز البيانات
 # =========================================================
 def clean_data(df):
-    """تنظيف وتجهيز البيانات للتحليل"""
 
-    # إزالة المسافات من أسماء الأعمدة
-    df.columns = df.columns.astype(str).str.strip()
+    # تنظيف أسماء الأعمدة
+    df.columns = (
+        df.columns
+        .astype(str)
+        .str.replace("\u202a", "", regex=False)
+        .str.replace("\u202b", "", regex=False)
+        .str.replace("\u202c", "", regex=False)
+        .str.replace("\u200e", "", regex=False)
+        .str.replace("\u200f", "", regex=False)
+        .str.replace("\ufeff", "", regex=False)
+        .str.strip()
+    )
 
-    # تنظيف النصوص
+    # -----------------------------------------------------
+    # الحقول النصية
+    # -----------------------------------------------------
     text_columns = [
         "اسم الدائرة",
         "رقم الموظف",
@@ -34,34 +104,58 @@ def clean_data(df):
     ]
 
     for col in text_columns:
+
         if col in df.columns:
-            df[col] = df[col].astype("string").str.strip()
 
-    # تحويل التواريخ
+            df[col] = clean_text_series(
+                df[col]
+            )
+
+            df[col] = df[col].replace(
+                ["", "nan", "NaN", "None", "<NA>"],
+                pd.NA
+            )
+
+    # -----------------------------------------------------
+    # تحويل من تاريخ
+    # -----------------------------------------------------
     if "من تاريخ" in df.columns:
-        df["من تاريخ"] = pd.to_datetime(
-            df["من تاريخ"],
-            errors="coerce",
-            dayfirst=True
+
+        df["من تاريخ"] = convert_date_column(
+            df["من تاريخ"]
         )
 
-        df["السنة"] = df["من تاريخ"].dt.year
+        # استخراج السنة
+        df["السنة"] = (
+            df["من تاريخ"]
+            .dt.year
+            .astype("Int64")
+        )
 
+    # -----------------------------------------------------
+    # تحويل إلى تاريخ
+    # -----------------------------------------------------
     if "الى تاريخ" in df.columns:
-        df["الى تاريخ"] = pd.to_datetime(
-            df["الى تاريخ"],
-            errors="coerce",
-            dayfirst=True
+
+        df["الى تاريخ"] = convert_date_column(
+            df["الى تاريخ"]
         )
 
-    # تحويل عدد الأيام والساعات إلى أرقام
+    # -----------------------------------------------------
+    # عدد الأيام
+    # -----------------------------------------------------
     if "عدد الايام" in df.columns:
+
         df["عدد الايام"] = pd.to_numeric(
             df["عدد الايام"],
             errors="coerce"
         )
 
+    # -----------------------------------------------------
+    # عدد الساعات
+    # -----------------------------------------------------
     if "عدد الساعات" in df.columns:
+
         df["عدد الساعات"] = pd.to_numeric(
             df["عدد الساعات"],
             errors="coerce"
@@ -70,23 +164,29 @@ def clean_data(df):
     return df
 
 
+# =========================================================
+# عدد الموظفين بدون تكرار
+# =========================================================
 def unique_employees(df):
-    """عدد الموظفين بدون تكرار"""
+
     if "رقم الموظف" not in df.columns:
         return 0
 
-    return df["رقم الموظف"].dropna().nunique()
+    employees = df["رقم الموظف"].dropna()
+
+    return employees.nunique()
 
 
+# =========================================================
+# تحليل أنواع الإجازات والأذونات
+# =========================================================
 def leave_analysis(df):
-    """تحليل أنواع الإجازات والأذونات"""
 
     if "اسم الاجازة او الاذن" not in df.columns:
         return pd.DataFrame()
 
     data = df[
         df["اسم الاجازة او الاذن"].notna()
-        & (df["اسم الاجازة او الاذن"].str.strip() != "")
     ].copy()
 
     if data.empty:
@@ -103,65 +203,102 @@ def leave_analysis(df):
         "عدد مرات التكرار"
     ]
 
-    total = result["عدد مرات التكرار"].sum()
+    total = result[
+        "عدد مرات التكرار"
+    ].sum()
 
-    result["النسبة"] = (
-        result["عدد مرات التكرار"] / total * 100
-    ).round(2)
+    if total > 0:
 
-    result["النسبة %"] = result["النسبة"].apply(
-        lambda x: f"{x:.2f}%"
+        result["النسبة"] = (
+            result["عدد مرات التكرار"]
+            / total
+            * 100
+        ).round(2)
+
+    else:
+
+        result["النسبة"] = 0
+
+    result["النسبة %"] = (
+        result["النسبة"]
+        .apply(
+            lambda x: f"{x:.2f}%"
+        )
     )
 
     return result
 
 
+# =========================================================
+# تحليل السنوات
+# =========================================================
 def year_analysis(df):
-    """تحليل البيانات حسب السنة"""
 
-    years = [2023, 2024, 2025, 2026]
+    years = [
+        2023,
+        2024,
+        2025,
+        2026
+    ]
 
     if "السنة" not in df.columns:
+
         return pd.DataFrame({
-            "السنة": years,
-            "عدد الإجازات والأذونات": [0, 0, 0, 0]
+            "السنة": [
+                str(x) for x in years
+            ],
+            "عدد الإجازات والأذونات": [
+                0, 0, 0, 0
+            ]
         })
 
     result = (
-        df[df["السنة"].isin(years)]
+        df[
+            df["السنة"].isin(years)
+        ]
         .groupby("السنة")
         .size()
-        .reindex(years, fill_value=0)
-        .reset_index(name="عدد الإجازات والأذونات")
+        .reindex(
+            years,
+            fill_value=0
+        )
+        .reset_index(
+            name="عدد الإجازات والأذونات"
+        )
     )
 
-    result["السنة"] = result["السنة"].astype(int).astype(str)
+    result["السنة"] = (
+        result["السنة"]
+        .astype(int)
+        .astype(str)
+    )
 
     return result
 
 
+# =========================================================
+# إحصائيات الأيام
+# =========================================================
 def days_statistics(df):
-    """إحصائيات عدد الأيام"""
+
+    default = {
+        "mean": 0,
+        "median": 0,
+        "min": 0,
+        "max": 0,
+        "sum": 0
+    }
 
     if "عدد الايام" not in df.columns:
-        return {
-            "mean": 0,
-            "median": 0,
-            "min": 0,
-            "max": 0,
-            "sum": 0
-        }
+        return default
 
-    days = df["عدد الايام"].dropna()
+    days = (
+        df["عدد الايام"]
+        .dropna()
+    )
 
-    if len(days) == 0:
-        return {
-            "mean": 0,
-            "median": 0,
-            "min": 0,
-            "max": 0,
-            "sum": 0
-        }
+    if days.empty:
+        return default
 
     return {
         "mean": days.mean(),
@@ -172,94 +309,133 @@ def days_statistics(df):
     }
 
 
+# =========================================================
+# إحصائيات الساعات
+# =========================================================
 def hours_statistics(df):
-    """إحصائيات عدد الساعات"""
+
+    default = {
+        "mean": 0,
+        "min": 0,
+        "max": 0,
+        "sum": 0
+    }
 
     if "عدد الساعات" not in df.columns:
+        return default
+
+    hours = (
+        df["عدد الساعات"]
+        .dropna()
+    )
+
+    if hours.empty:
+        return default
+
+    # نستخدم القيم الأكبر من صفر
+    # للمتوسط والأقل والأعلى
+    positive_hours = hours[
+        hours > 0
+    ]
+
+    total_hours = hours.sum()
+
+    if positive_hours.empty:
+
         return {
             "mean": 0,
             "min": 0,
             "max": 0,
-            "sum": 0
-        }
-
-    hours = df["عدد الساعات"].dropna()
-
-    # نتجاهل الصفر في المتوسط والأقل والأعلى
-    positive_hours = hours[hours > 0]
-
-    if len(hours) == 0:
-        return {
-            "mean": 0,
-            "min": 0,
-            "max": 0,
-            "sum": 0
-        }
-
-    if len(positive_hours) == 0:
-        return {
-            "mean": 0,
-            "min": 0,
-            "max": 0,
-            "sum": hours.sum()
+            "sum": total_hours
         }
 
     return {
         "mean": positive_hours.mean(),
         "min": positive_hours.min(),
         "max": positive_hours.max(),
-        "sum": hours.sum()
+        "sum": total_hours
     }
 
 
+# =========================================================
+# عرض المؤشرات الرئيسية
+# =========================================================
 def display_kpis(df):
-    """عرض المؤشرات الرئيسية"""
 
     employees = unique_employees(df)
+
     total_records = len(df)
+
     days = days_statistics(df)
 
     col1, col2, col3, col4, col5 = st.columns(5)
 
-    col1.metric(
-        "👥 عدد الموظفين",
-        f"{employees:,}"
-    )
+    with col1:
 
-    col2.metric(
-        "📋 إجمالي الإجازات والأذونات",
-        f"{total_records:,}"
-    )
+        st.metric(
+            "👥 عدد الموظفين",
+            f"{employees:,}"
+        )
 
-    col3.metric(
-        "📅 متوسط عدد الأيام",
-        f"{days['mean']:.2f}"
-    )
+    with col2:
 
-    col4.metric(
-        "⬇️ أقل عدد أيام",
-        f"{days['min']:,.2f}"
-    )
+        st.metric(
+            "📋 إجمالي الإجازات والأذونات",
+            f"{total_records:,}"
+        )
 
-    col5.metric(
-        "⬆️ أعلى عدد أيام",
-        f"{days['max']:,.2f}"
-    )
+    with col3:
+
+        st.metric(
+            "📅 متوسط عدد الأيام",
+            f"{days['mean']:,.2f}"
+        )
+
+    with col4:
+
+        st.metric(
+            "⬇️ أقل عدد أيام",
+            f"{days['min']:,.2f}"
+        )
+
+    with col5:
+
+        st.metric(
+            "⬆️ أعلى عدد أيام",
+            f"{days['max']:,.2f}"
+        )
 
 
-def display_leave_types(df):
-    """عرض تحليل أنواع الإجازات"""
+# =========================================================
+# عرض أنواع الإجازات والأذونات
+# =========================================================
+def display_leave_types(
+    df,
+    chart_key
+):
 
     analysis = leave_analysis(df)
 
     if analysis.empty:
-        st.info("لا توجد بيانات إجازات أو أذونات.")
+
+        st.info(
+            "لا توجد بيانات إجازات أو أذونات."
+        )
+
         return
 
-    col1, col2 = st.columns([1, 1.3])
+    col1, col2 = st.columns(
+        [1, 1.4]
+    )
 
+    # -----------------------------------------------------
+    # الجدول
+    # -----------------------------------------------------
     with col1:
-        st.subheader("📋 أنواع الإجازات والأذونات")
+
+        st.subheader(
+            "📋 أنواع الإجازات والأذونات"
+        )
 
         display_table = analysis[
             [
@@ -275,12 +451,21 @@ def display_leave_types(df):
             hide_index=True
         )
 
+    # -----------------------------------------------------
+    # الرسم
+    # -----------------------------------------------------
     with col2:
-        st.subheader("📊 عدد مرات التكرار")
 
-        chart_data = analysis.sort_values(
-            "عدد مرات التكرار",
-            ascending=True
+        st.subheader(
+            "📊 عدد مرات التكرار"
+        )
+
+        chart_data = (
+            analysis
+            .sort_values(
+                "عدد مرات التكرار",
+                ascending=True
+            )
         )
 
         fig = px.bar(
@@ -294,7 +479,10 @@ def display_leave_types(df):
         fig.update_layout(
             xaxis_title="عدد مرات التكرار",
             yaxis_title="",
-            height=max(400, len(chart_data) * 35)
+            height=max(
+                400,
+                len(chart_data) * 38
+            )
         )
 
         fig.update_traces(
@@ -303,20 +491,34 @@ def display_leave_types(df):
 
         st.plotly_chart(
             fig,
-            use_container_width=True
+            use_container_width=True,
+            key=chart_key
         )
 
 
-def display_years(df):
-    """عرض التحليل حسب السنوات"""
+# =========================================================
+# عرض تحليل السنوات
+# =========================================================
+def display_years(
+    df,
+    chart_key
+):
 
-    st.subheader("📆 توزيع الإجازات والأذونات حسب السنة")
+    st.subheader(
+        "📆 توزيع الإجازات والأذونات حسب السنة"
+    )
 
     analysis = year_analysis(df)
 
-    col1, col2 = st.columns([1.4, 1])
+    col1, col2 = st.columns(
+        [1.4, 1]
+    )
 
+    # -----------------------------------------------------
+    # الرسم
+    # -----------------------------------------------------
     with col1:
+
         fig = px.bar(
             analysis,
             x="السنة",
@@ -335,10 +537,15 @@ def display_years(df):
 
         st.plotly_chart(
             fig,
-            use_container_width=True
+            use_container_width=True,
+            key=chart_key
         )
 
+    # -----------------------------------------------------
+    # الجدول
+    # -----------------------------------------------------
     with col2:
+
         st.dataframe(
             analysis,
             use_container_width=True,
@@ -346,69 +553,95 @@ def display_years(df):
         )
 
 
+# =========================================================
+# عرض إحصائيات الأيام
+# =========================================================
 def display_days_statistics(df):
-    """عرض إحصائيات الأيام"""
 
-    st.subheader("📅 إحصائيات عدد الأيام")
+    st.subheader(
+        "📅 إحصائيات عدد الأيام"
+    )
 
     stats = days_statistics(df)
 
     col1, col2, col3, col4, col5 = st.columns(5)
 
-    col1.metric(
-        "متوسط الأيام",
-        f"{stats['mean']:.2f}"
-    )
+    with col1:
 
-    col2.metric(
-        "الوسيط",
-        f"{stats['median']:.2f}"
-    )
+        st.metric(
+            "متوسط الأيام",
+            f"{stats['mean']:,.2f}"
+        )
 
-    col3.metric(
-        "أقل عدد أيام",
-        f"{stats['min']:.2f}"
-    )
+    with col2:
 
-    col4.metric(
-        "أعلى عدد أيام",
-        f"{stats['max']:.2f}"
-    )
+        st.metric(
+            "الوسيط",
+            f"{stats['median']:,.2f}"
+        )
 
-    col5.metric(
-        "إجمالي الأيام",
-        f"{stats['sum']:,.2f}"
-    )
+    with col3:
+
+        st.metric(
+            "أقل عدد أيام",
+            f"{stats['min']:,.2f}"
+        )
+
+    with col4:
+
+        st.metric(
+            "أعلى عدد أيام",
+            f"{stats['max']:,.2f}"
+        )
+
+    with col5:
+
+        st.metric(
+            "إجمالي الأيام",
+            f"{stats['sum']:,.2f}"
+        )
 
 
+# =========================================================
+# عرض إحصائيات الساعات
+# =========================================================
 def display_hours_statistics(df):
-    """عرض إحصائيات الساعات"""
 
-    st.subheader("⏰ إحصائيات عدد الساعات")
+    st.subheader(
+        "⏰ إحصائيات عدد الساعات"
+    )
 
     stats = hours_statistics(df)
 
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric(
-        "متوسط الساعات",
-        f"{stats['mean']:.2f}"
-    )
+    with col1:
 
-    col2.metric(
-        "أقل عدد ساعات",
-        f"{stats['min']:.2f}"
-    )
+        st.metric(
+            "متوسط الساعات",
+            f"{stats['mean']:,.2f}"
+        )
 
-    col3.metric(
-        "أعلى عدد ساعات",
-        f"{stats['max']:.2f}"
-    )
+    with col2:
 
-    col4.metric(
-        "إجمالي الساعات",
-        f"{stats['sum']:,.2f}"
-    )
+        st.metric(
+            "أقل عدد ساعات",
+            f"{stats['min']:,.2f}"
+        )
+
+    with col3:
+
+        st.metric(
+            "أعلى عدد ساعات",
+            f"{stats['max']:,.2f}"
+        )
+
+    with col4:
+
+        st.metric(
+            "إجمالي الساعات",
+            f"{stats['sum']:,.2f}"
+        )
 
 
 # =========================================================
@@ -416,10 +649,17 @@ def display_hours_statistics(df):
 # =========================================================
 uploaded_file = st.file_uploader(
     "📂 ارفعي ملف بيانات الإجازات والأذونات",
-    type=["xlsx", "xls", "csv"]
+    type=[
+        "xlsx",
+        "xls",
+        "csv"
+    ]
 )
 
 
+# =========================================================
+# عند رفع الملف
+# =========================================================
 if uploaded_file is not None:
 
     try:
@@ -427,16 +667,61 @@ if uploaded_file is not None:
         # =================================================
         # قراءة الملف
         # =================================================
-        if uploaded_file.name.lower().endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-        else:
-            df = pd.read_excel(uploaded_file)
+        if uploaded_file.name.lower().endswith(
+            ".csv"
+        ):
 
-        # تنظيف أسماء الأعمدة
-        df.columns = df.columns.astype(str).str.strip()
+            df = pd.read_csv(
+                uploaded_file
+            )
+
+        else:
+
+            df = pd.read_excel(
+                uploaded_file
+            )
 
         # =================================================
-        # التحقق من الحقول
+        # تنظيف أسماء الأعمدة قبل التحقق
+        # =================================================
+        df.columns = (
+            df.columns
+            .astype(str)
+            .str.replace(
+                "\u202a",
+                "",
+                regex=False
+            )
+            .str.replace(
+                "\u202b",
+                "",
+                regex=False
+            )
+            .str.replace(
+                "\u202c",
+                "",
+                regex=False
+            )
+            .str.replace(
+                "\u200e",
+                "",
+                regex=False
+            )
+            .str.replace(
+                "\u200f",
+                "",
+                regex=False
+            )
+            .str.replace(
+                "\ufeff",
+                "",
+                regex=False
+            )
+            .str.strip()
+        )
+
+        # =================================================
+        # الحقول المطلوبة
         # =================================================
         required_columns = [
             "اسم الدائرة",
@@ -449,10 +734,14 @@ if uploaded_file is not None:
         ]
 
         missing_columns = [
-            col for col in required_columns
+            col
+            for col in required_columns
             if col not in df.columns
         ]
 
+        # =================================================
+        # إذا في حقول ناقصة
+        # =================================================
         if missing_columns:
 
             st.error(
@@ -460,22 +749,82 @@ if uploaded_file is not None:
             )
 
             for col in missing_columns:
-                st.write(f"• {col}")
 
-            st.write("الأعمدة الموجودة في الملف:")
-            st.write(list(df.columns))
+                st.write(
+                    f"• {col}"
+                )
+
+            st.write(
+                "الأعمدة الموجودة في الملف:"
+            )
+
+            st.write(
+                list(df.columns)
+            )
 
             st.stop()
 
+        # =================================================
         # تنظيف البيانات
+        # =================================================
         df = clean_data(df)
 
         # إزالة الصفوف الفارغة بالكامل
-        df = df.dropna(how="all")
-
-        st.success(
-            f"تم تحميل الملف بنجاح — عدد السجلات: {len(df):,}"
+        df = df.dropna(
+            how="all"
         )
+
+        # =================================================
+        # معلومات التحميل
+        # =================================================
+        st.success(
+            f"تم تحميل الملف بنجاح — "
+            f"عدد السجلات: {len(df):,}"
+        )
+
+        # =================================================
+        # التحقق من التواريخ
+        # =================================================
+        invalid_from_dates = (
+            df["من تاريخ"]
+            .isna()
+            .sum()
+        )
+
+        if "الى تاريخ" in df.columns:
+
+            invalid_to_dates = (
+                df["الى تاريخ"]
+                .isna()
+                .sum()
+            )
+
+        else:
+
+            invalid_to_dates = 0
+
+        if (
+            invalid_from_dates > 0
+            or invalid_to_dates > 0
+        ):
+
+            with st.expander(
+                "⚠️ ملاحظات على التواريخ"
+            ):
+
+                st.write(
+                    f"عدد القيم غير القابلة للتحويل "
+                    f"في «من تاريخ»: "
+                    f"{invalid_from_dates:,}"
+                )
+
+                if "الى تاريخ" in df.columns:
+
+                    st.write(
+                        f"عدد القيم غير القابلة للتحويل "
+                        f"في «الى تاريخ»: "
+                        f"{invalid_to_dates:,}"
+                    )
 
         # =================================================
         # التابات
@@ -492,20 +841,32 @@ if uploaded_file is not None:
         # =================================================
         with tab1:
 
-            st.header("الإحصائيات العامة لجميع الدوائر")
+            st.header(
+                "الإحصائيات العامة لجميع الدوائر"
+            )
 
-            # KPI
+            # -------------------------------------------------
+            # المؤشرات الرئيسية
+            # -------------------------------------------------
             display_kpis(df)
 
             st.divider()
 
-            # =============================================
-            # تحليل الدوائر
-            # =============================================
-            st.subheader("🏢 ملخص الدوائر")
+            # -------------------------------------------------
+            # ملخص الدوائر
+            # -------------------------------------------------
+            st.subheader(
+                "🏢 ملخص الدوائر"
+            )
 
             department_summary = (
-                df.groupby("اسم الدائرة")
+                df
+                .dropna(
+                    subset=["اسم الدائرة"]
+                )
+                .groupby(
+                    "اسم الدائرة"
+                )
                 .agg(
                     عدد_الموظفين=(
                         "رقم الموظف",
@@ -525,13 +886,21 @@ if uploaded_file is not None:
                 "عدد الإجازات والأذونات"
             ]
 
-            department_summary = department_summary.sort_values(
-                "عدد الإجازات والأذونات",
-                ascending=False
+            department_summary = (
+                department_summary
+                .sort_values(
+                    "عدد الإجازات والأذونات",
+                    ascending=False
+                )
             )
 
-            col1, col2 = st.columns([1, 1.4])
+            col1, col2 = st.columns(
+                [1, 1.4]
+            )
 
+            # -------------------------------------------------
+            # جدول الدوائر
+            # -------------------------------------------------
             with col1:
 
                 st.dataframe(
@@ -540,13 +909,21 @@ if uploaded_file is not None:
                     hide_index=True
                 )
 
+            # -------------------------------------------------
+            # رسم الدوائر
+            # -------------------------------------------------
             with col2:
 
-                fig_departments = px.bar(
-                    department_summary.sort_values(
+                department_chart_data = (
+                    department_summary
+                    .sort_values(
                         "عدد الإجازات والأذونات",
                         ascending=True
-                    ),
+                    )
+                )
+
+                fig_departments = px.bar(
+                    department_chart_data,
                     x="عدد الإجازات والأذونات",
                     y="اسم الدائرة",
                     orientation="h",
@@ -554,11 +931,15 @@ if uploaded_file is not None:
                 )
 
                 fig_departments.update_layout(
-                    xaxis_title="عدد الإجازات والأذونات",
+                    xaxis_title=(
+                        "عدد الإجازات والأذونات"
+                    ),
                     yaxis_title="",
                     height=max(
                         400,
-                        len(department_summary) * 35
+                        len(
+                            department_summary
+                        ) * 38
                     )
                 )
 
@@ -568,70 +949,118 @@ if uploaded_file is not None:
 
                 st.plotly_chart(
                     fig_departments,
-                    use_container_width=True
+                    use_container_width=True,
+                    key="general_departments_chart"
                 )
 
             st.divider()
 
-            # =============================================
+            # -------------------------------------------------
             # أنواع الإجازات
-            # =============================================
-            display_leave_types(df)
+            # -------------------------------------------------
+            display_leave_types(
+                df,
+                chart_key=(
+                    "general_leave_types_chart"
+                )
+            )
 
             st.divider()
 
-            # =============================================
+            # -------------------------------------------------
             # السنوات
-            # =============================================
-            display_years(df)
+            # -------------------------------------------------
+            display_years(
+                df,
+                chart_key=(
+                    "general_year_chart"
+                )
+            )
 
             st.divider()
 
-            # =============================================
+            # -------------------------------------------------
             # الأيام
-            # =============================================
-            display_days_statistics(df)
+            # -------------------------------------------------
+            display_days_statistics(
+                df
+            )
 
             st.divider()
 
-            # =============================================
+            # -------------------------------------------------
             # الساعات
-            # =============================================
-            display_hours_statistics(df)
+            # -------------------------------------------------
+            display_hours_statistics(
+                df
+            )
 
         # =================================================
         # TAB 2
         # =================================================
         with tab2:
 
-            st.header("🏢 تحليل حسب الدائرة")
+            st.header(
+                "🏢 تحليل حسب الدائرة"
+            )
 
+            # =================================================
+            # قائمة الدوائر
+            # =================================================
             departments = sorted(
-                df["اسم الدائرة"]
+                df[
+                    "اسم الدائرة"
+                ]
                 .dropna()
                 .unique()
                 .tolist()
             )
 
-            col_filter1, col_filter2 = st.columns(2)
+            if not departments:
 
-            with col_filter1:
-
-                selected_department = st.selectbox(
-                    "اختر الدائرة",
-                    departments
+                st.warning(
+                    "لا توجد دوائر متاحة في البيانات."
                 )
 
+                st.stop()
+
+            # =================================================
+            # الفلاتر
+            # =================================================
+            col_filter1, col_filter2 = (
+                st.columns(2)
+            )
+
+            # -------------------------------------------------
+            # فلتر الدائرة
+            # -------------------------------------------------
+            with col_filter1:
+
+                selected_department = (
+                    st.selectbox(
+                        "اختر الدائرة",
+                        departments,
+                        key=(
+                            "department_filter"
+                        )
+                    )
+                )
+
+            # -------------------------------------------------
+            # بيانات الدائرة
+            # -------------------------------------------------
             department_df = df[
                 df["اسم الدائرة"]
                 == selected_department
             ].copy()
 
-            # =============================================
-            # فلتر السنة
-            # =============================================
+            # =================================================
+            # السنوات المتوفرة
+            # =================================================
             available_years = (
-                department_df["السنة"]
+                department_df[
+                    "السنة"
+                ]
                 .dropna()
                 .astype(int)
                 .unique()
@@ -640,106 +1069,236 @@ if uploaded_file is not None:
 
             available_years = sorted(
                 [
-                    year for year in available_years
-                    if year in [2023, 2024, 2025, 2026]
+                    year
+                    for year
+                    in available_years
+                    if year
+                    in [
+                        2023,
+                        2024,
+                        2025,
+                        2026
+                    ]
                 ]
             )
 
-            year_options = ["كل السنوات"] + available_years
-
-            with col_filter2:
-
-                selected_year = st.selectbox(
-                    "اختر السنة",
-                    year_options
-                )
-
-            # تطبيق فلتر السنة
-            if selected_year != "كل السنوات":
-                filtered_df = department_df[
-                    department_df["السنة"]
-                    == selected_year
-                ].copy()
-            else:
-                filtered_df = department_df.copy()
-
-            st.info(
-                f"الدائرة المختارة: {selected_department}"
-                +
-                (
-                    f" | السنة: {selected_year}"
-                    if selected_year != "كل السنوات"
-                    else " | جميع السنوات"
-                )
+            year_options = (
+                ["كل السنوات"]
+                + available_years
             )
 
-            # =============================================
-            # KPI
-            # =============================================
-            display_kpis(filtered_df)
+            # -------------------------------------------------
+            # فلتر السنة
+            # -------------------------------------------------
+            with col_filter2:
 
-            st.divider()
+                selected_year = (
+                    st.selectbox(
+                        "اختر السنة",
+                        year_options,
+                        key=(
+                            "year_filter"
+                        )
+                    )
+                )
 
-            # =============================================
-            # أنواع الإجازات
-            # =============================================
-            display_leave_types(filtered_df)
+            # =================================================
+            # تطبيق فلتر السنة
+            # =================================================
+            if (
+                selected_year
+                != "كل السنوات"
+            ):
 
-            st.divider()
+                filtered_df = (
+                    department_df[
+                        department_df[
+                            "السنة"
+                        ]
+                        == int(
+                            selected_year
+                        )
+                    ]
+                    .copy()
+                )
 
-            # =============================================
-            # السنوات
-            # إذا كان كل السنوات
-            # =============================================
-            if selected_year == "كل السنوات":
-                display_years(filtered_df)
+            else:
+
+                filtered_df = (
+                    department_df.copy()
+                )
+
+            # =================================================
+            # عرض الاختيار
+            # =================================================
+            if (
+                selected_year
+                == "كل السنوات"
+            ):
+
+                st.info(
+                    f"الدائرة المختارة: "
+                    f"{selected_department} "
+                    f"| جميع السنوات"
+                )
+
+            else:
+
+                st.info(
+                    f"الدائرة المختارة: "
+                    f"{selected_department} "
+                    f"| السنة: "
+                    f"{selected_year}"
+                )
+
+            # =================================================
+            # التحقق من وجود بيانات
+            # =================================================
+            if filtered_df.empty:
+
+                st.warning(
+                    "لا توجد بيانات مطابقة "
+                    "للفلاتر المختارة."
+                )
+
+            else:
+
+                # -------------------------------------------------
+                # المؤشرات
+                # -------------------------------------------------
+                display_kpis(
+                    filtered_df
+                )
 
                 st.divider()
 
-            # =============================================
-            # الأيام
-            # =============================================
-            display_days_statistics(filtered_df)
-
-            st.divider()
-
-            # =============================================
-            # الساعات
-            # =============================================
-            display_hours_statistics(filtered_df)
-
-            st.divider()
-
-            # =============================================
-            # البيانات التفصيلية
-            # =============================================
-            with st.expander(
-                "🔎 عرض البيانات التفصيلية"
-            ):
-
-                columns_to_show = [
-                    "اسم الدائرة",
-                    "رقم الموظف",
-                    "اسم الموظف",
-                    "الوحدة التنظيمية",
-                    "اسم الاجازة او الاذن",
-                    "من تاريخ",
-                    "الى تاريخ",
-                    "عدد الايام",
-                    "عدد الساعات"
-                ]
-
-                existing_columns = [
-                    col for col in columns_to_show
-                    if col in filtered_df.columns
-                ]
-
-                st.dataframe(
-                    filtered_df[existing_columns],
-                    use_container_width=True,
-                    hide_index=True
+                # -------------------------------------------------
+                # أنواع الإجازات
+                # -------------------------------------------------
+                display_leave_types(
+                    filtered_df,
+                    chart_key=(
+                        "department_leave_types_chart"
+                    )
                 )
 
+                st.divider()
+
+                # -------------------------------------------------
+                # السنوات
+                # -------------------------------------------------
+                if (
+                    selected_year
+                    == "كل السنوات"
+                ):
+
+                    display_years(
+                        filtered_df,
+                        chart_key=(
+                            "department_year_chart"
+                        )
+                    )
+
+                    st.divider()
+
+                # -------------------------------------------------
+                # الأيام
+                # -------------------------------------------------
+                display_days_statistics(
+                    filtered_df
+                )
+
+                st.divider()
+
+                # -------------------------------------------------
+                # الساعات
+                # -------------------------------------------------
+                display_hours_statistics(
+                    filtered_df
+                )
+
+                st.divider()
+
+                # -------------------------------------------------
+                # البيانات التفصيلية
+                # -------------------------------------------------
+                with st.expander(
+                    "🔎 عرض البيانات التفصيلية"
+                ):
+
+                    columns_to_show = [
+                        "تسلسل",
+                        "اسم الدائرة",
+                        "رقم الموظف",
+                        "اسم الموظف",
+                        "الوحدة التنظيمية",
+                        "اسم الاجازة او الاذن",
+                        "من تاريخ",
+                        "وقت البداية",
+                        "الى تاريخ",
+                        "وقت النهاية",
+                        "عدد الايام",
+                        "عدد الساعات"
+                    ]
+
+                    existing_columns = [
+                        col
+                        for col
+                        in columns_to_show
+                        if col
+                        in filtered_df.columns
+                    ]
+
+                    detail_df = (
+                        filtered_df[
+                            existing_columns
+                        ]
+                        .copy()
+                    )
+
+                    # عرض التاريخ بصيغة واضحة
+                    if (
+                        "من تاريخ"
+                        in detail_df.columns
+                    ):
+
+                        detail_df[
+                            "من تاريخ"
+                        ] = (
+                            detail_df[
+                                "من تاريخ"
+                            ]
+                            .dt.strftime(
+                                "%d/%m/%Y"
+                            )
+                        )
+
+                    if (
+                        "الى تاريخ"
+                        in detail_df.columns
+                    ):
+
+                        detail_df[
+                            "الى تاريخ"
+                        ] = (
+                            detail_df[
+                                "الى تاريخ"
+                            ]
+                            .dt.strftime(
+                                "%d/%m/%Y"
+                            )
+                        )
+
+                    st.dataframe(
+                        detail_df,
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+
+    # =====================================================
+    # معالجة الأخطاء
+    # =====================================================
     except Exception as e:
 
         st.error(
@@ -749,6 +1308,9 @@ if uploaded_file is not None:
         st.exception(e)
 
 
+# =========================================================
+# قبل رفع الملف
+# =========================================================
 else:
 
     st.info(
