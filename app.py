@@ -8,11 +8,11 @@ import plotly.express as px
 # =========================================================
 st.set_page_config(
     page_title="تحليل الإجازات والأذونات",
-    page_icon="📊",
+    page_icon="",
     layout="wide"
 )
 
-st.title("📊 لوحة تحليل الإجازات والأذونات")
+st.title(" لوحة تحليل الإجازات والأذونات")
 st.caption("تحليل بيانات الإجازات والأذونات للدوائر الحكومية")
 
 
@@ -525,8 +525,8 @@ def display_permission_kpis(df):
     c1.metric("👥 مستخدمو الأذونات", f"{k['employees']:,}")
     c2.metric("📝 عدد الأذونات", f"{k['requests']:,}")
     c3.metric("⏰ إجمالي ساعات الأذونات", f"{k['total_hours']:,.2f}")
-    c4.metric("👤 ساعة لكل مستخدم", f"{k['hours_per_employee']:,.2f}")
-    c5.metric("🔁 إذن لكل مستخدم", f"{k['requests_per_employee']:,.2f}")
+    c4.metric("👤 متوسط الساعات لكل مستخدم", f"{k['hours_per_employee']:,.2f}")
+    c5.metric("🔁متوسط الاضن لكل مستخدم", f"{k['requests_per_employee']:,.2f}")
 
 
 def permission_type_analysis(df):
