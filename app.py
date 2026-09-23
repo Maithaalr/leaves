@@ -442,6 +442,181 @@ def hours_statistics(df):
 
 
 # =========================================================
+# PERMISSION / USAGE ANALYSIS
+# =========================================================
+def permission_mask(df):
+    """اعتبار أي سجل يحتوي اسمه على كلمة إذن/اذن كسجل إذن."""
+    if "اسم الاجازة او الاذن" not in df.columns:
+        return pd.Series(False, index=df.index)
+
+    names = clean_text_series(df["اسم الاجازة او الاذن"]).fillna("")
+    return names.str.contains(r"(?:إذن|اذن)", regex=True, na=False)
+
+
+def permission_data(df):
+    return df.loc[permission_mask(df)].copy()
+
+
+def usage_kpis(df):
+    """مؤشرات استخدام الأذونات فقط."""
+    data = permission_data(df)
+    employees = unique_employees(data)
+    requests = len(data)
+
+    if "عدد الساعات" in data.columns:
+        hours = pd.to_numeric(data["عدد الساعات"], errors="coerce").fillna(0)
+        total_hours = hours.sum()
+        positive = hours[hours > 0]
+        avg_request_hours = positive.mean() if not positive.empty else 0
+    else:
+        total_hours = 0
+        avg_request_hours = 0
+
+    hours_per_employee = total_hours / employees if employees else 0
+    requests_per_employee = requests / employees if employees else 0
+
+    return {
+        "employees": employees,
+        "requests": requests,
+        "total_hours": total_hours,
+        "hours_per_employee": hours_per_employee,
+        "requests_per_employee": requests_per_employee,
+        "avg_request_hours": avg_request_hours,
+    }
+
+
+def display_permission_kpis(df):
+    st.subheader("⏱️ مؤشرات استخدام الأذونات")
+    k = usage_kpis(df)
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("👥 مستخدمو الأذونات", f"{k['employees']:,}")
+    c2.metric("📝 عدد الأذونات", f"{k['requests']:,}")
+    c3.metric("⏰ إجمالي ساعات الأذونات", f"{k['total_hours']:,.2f}")
+    c4.metric("👤 ساعة لكل مستخدم", f"{k['hours_per_employee']:,.2f}")
+    c5.metric("🔁 إذن لكل مستخدم", f"{k['requests_per_employee']:,.2f}")
+
+
+def permission_type_analysis(df):
+    data = permission_data(df)
+    if data.empty:
+        return pd.DataFrame()
+
+    result = (
+        data.groupby("اسم الاجازة او الاذن", dropna=False)
+        .agg(
+            عدد_المرات=("رقم الموظف", "size"),
+            عدد_الموظفين=("رقم الموظف", "nunique"),
+            إجمالي_الساعات=("عدد الساعات", "sum"),
+        )
+        .reset_index()
+    )
+    result.columns = ["نوع الإذن", "عدد المرات", "عدد الموظفين", "إجمالي الساعات"]
+    result["متوسط الساعات للإذن"] = (
+        result["إجمالي الساعات"] / result["عدد المرات"].replace(0, pd.NA)
+    ).fillna(0).round(2)
+    total = result["إجمالي الساعات"].sum()
+    result["النسبة من الساعات %"] = (
+        result["إجمالي الساعات"] / total * 100 if total else 0
+    ).round(2)
+    return result.sort_values("إجمالي الساعات", ascending=False)
+
+
+def display_permission_types(df, chart_key):
+    st.subheader("🪪 تحليل أنواع الأذونات")
+    analysis = permission_type_analysis(df)
+    if analysis.empty:
+        st.info("لا توجد سجلات أذونات في البيانات المختارة.")
+        return
+
+    col1, col2 = st.columns([1.15, 1.35])
+    with col1:
+        st.dataframe(analysis, use_container_width=True, hide_index=True)
+    with col2:
+        chart = analysis.sort_values("إجمالي الساعات", ascending=True)
+        fig = px.bar(
+            chart,
+            x="إجمالي الساعات",
+            y="نوع الإذن",
+            orientation="h",
+            text="إجمالي الساعات",
+            hover_data=["عدد المرات", "عدد الموظفين", "متوسط الساعات للإذن", "النسبة من الساعات %"],
+        )
+        fig.update_traces(texttemplate="%{text:,.1f}", textposition="outside")
+        fig.update_layout(xaxis_title="إجمالي الساعات", yaxis_title="", height=max(350, len(chart) * 55))
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+
+
+def build_department_usage_summary(df):
+    data = permission_data(df)
+    if data.empty:
+        return pd.DataFrame()
+
+    result = (
+        data.dropna(subset=["اسم الدائرة"])
+        .groupby("اسم الدائرة")
+        .agg(
+            عدد_المستخدمين=("رقم الموظف", "nunique"),
+            عدد_الأذونات=("رقم الموظف", "size"),
+            إجمالي_الساعات=("عدد الساعات", "sum"),
+        )
+        .reset_index()
+    )
+    result["ساعة لكل مستخدم"] = (
+        result["إجمالي_الساعات"] / result["عدد_المستخدمين"].replace(0, pd.NA)
+    ).fillna(0).round(2)
+    result["إذن لكل مستخدم"] = (
+        result["عدد_الأذونات"] / result["عدد_المستخدمين"].replace(0, pd.NA)
+    ).fillna(0).round(2)
+    total_hours = result["إجمالي_الساعات"].sum()
+    result["نسبة الساعات %"] = (
+        result["إجمالي_الساعات"] / total_hours * 100 if total_hours else 0
+    ).round(2)
+    result = result.rename(columns={
+        "عدد_المستخدمين": "عدد المستخدمين",
+        "عدد_الأذونات": "عدد الأذونات",
+        "إجمالي_الساعات": "إجمالي الساعات",
+    })
+    return result.sort_values("إجمالي الساعات", ascending=False)
+
+
+def display_department_usage(df):
+    st.subheader("🏢 مقارنة استخدام الأذونات بين الدوائر")
+    summary = build_department_usage_summary(df)
+    if summary.empty:
+        st.info("لا توجد بيانات أذونات كافية للمقارنة بين الدوائر.")
+        return
+
+    st.dataframe(summary, use_container_width=True, hide_index=True)
+
+    metric = st.radio(
+        "اختر مؤشر المقارنة",
+        ["إجمالي الساعات", "ساعة لكل مستخدم", "عدد الأذونات", "إذن لكل مستخدم"],
+        horizontal=True,
+        key="department_usage_metric",
+    )
+    chart = summary.sort_values(metric, ascending=True)
+    fig = px.bar(chart, x=metric, y="اسم الدائرة", orientation="h", text=metric)
+    fig.update_traces(textposition="outside")
+    fig.update_layout(xaxis_title=metric, yaxis_title="", height=max(450, len(chart) * 38))
+    st.plotly_chart(fig, use_container_width=True, key="department_usage_bar")
+
+    st.subheader("🔎 حجم الجهة مقابل كثافة الاستخدام")
+    fig_scatter = px.scatter(
+        summary,
+        x="عدد المستخدمين",
+        y="ساعة لكل مستخدم",
+        size="إجمالي الساعات",
+        hover_name="اسم الدائرة",
+        hover_data=["عدد الأذونات", "إذن لكل مستخدم", "نسبة الساعات %"],
+        size_max=55,
+    )
+    fig_scatter.update_layout(
+        xaxis_title="عدد مستخدمي الأذونات",
+        yaxis_title="متوسط ساعات الأذونات لكل مستخدم",
+    )
+    st.plotly_chart(fig_scatter, use_container_width=True, key="department_usage_scatter")
+
+# =========================================================
 # KPIs
 # =========================================================
 def display_kpis(df):
@@ -887,10 +1062,11 @@ if (
 # =========================================================
 # TABS
 # =========================================================
-tab1, tab2 = st.tabs(
+tab1, tab2, tab3 = st.tabs(
     [
         "📊 الإحصائيات العامة",
-        "🏢 تحليل حسب الدائرة"
+        "🏢 تحليل حسب الدائرة",
+        "⏱️ تحليل الأذونات"
     ]
 )
 
@@ -1018,6 +1194,10 @@ with tab1:
 
     st.divider()
 
+    # مؤشرات الأذونات
+    display_permission_kpis(df)
+
+    st.divider()
 
     # =====================================================
     # LEAVE TYPES
@@ -1235,6 +1415,16 @@ with tab2:
 
             st.divider()
 
+            display_permission_kpis(filtered_df)
+
+            st.divider()
+
+            display_permission_types(
+                filtered_df,
+                chart_key="department_permission_types_chart"
+            )
+
+            st.divider()
 
             # LEAVE TYPES
             display_leave_types(
@@ -1363,3 +1553,53 @@ with tab2:
                     use_container_width=True,
                     hide_index=True
                 )
+
+# =========================================================
+# TAB 3 - PERMISSIONS ANALYSIS
+# =========================================================
+with tab3:
+    st.header("⏱️ التحليل المتقدم للأذونات")
+    st.caption("يركز هذا القسم على سجلات الأذونات فقط، ويقارن حجم الاستخدام وكثافته بين الدوائر.")
+
+    display_permission_kpis(df)
+    st.divider()
+    display_permission_types(df, chart_key="general_permission_types_chart")
+    st.divider()
+    display_department_usage(df)
+
+    st.divider()
+    st.subheader("📆 اتجاه ساعات الأذونات حسب السنة")
+    p_df = permission_data(df)
+    if not p_df.empty and "السنة" in p_df.columns:
+        trend = (
+            p_df.dropna(subset=["السنة"])
+            .groupby("السنة")
+            .agg(
+                عدد_الأذونات=("رقم الموظف", "size"),
+                إجمالي_الساعات=("عدد الساعات", "sum"),
+                عدد_المستخدمين=("رقم الموظف", "nunique"),
+            )
+            .reset_index()
+            .sort_values("السنة")
+        )
+        trend["السنة"] = trend["السنة"].astype(int).astype(str)
+        trend["ساعة لكل مستخدم"] = (
+            trend["إجمالي_الساعات"] / trend["عدد_المستخدمين"].replace(0, pd.NA)
+        ).fillna(0).round(2)
+
+        c1, c2 = st.columns([1.4, 1])
+        with c1:
+            fig = px.line(
+                trend,
+                x="السنة",
+                y="إجمالي_الساعات",
+                markers=True,
+                text="إجمالي_الساعات",
+            )
+            fig.update_traces(textposition="top center")
+            fig.update_layout(xaxis_title="السنة", yaxis_title="إجمالي ساعات الأذونات")
+            st.plotly_chart(fig, use_container_width=True, key="permission_year_trend")
+        with c2:
+            st.dataframe(trend, use_container_width=True, hide_index=True)
+    else:
+        st.info("لا توجد بيانات سنوات كافية لتحليل اتجاه الأذونات.")
