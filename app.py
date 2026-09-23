@@ -40,38 +40,68 @@ def clean_text_series(series):
 # =========================================================
 def convert_date_column(series):
     """
-    تحويل التواريخ بصيغة:
-    DD/MM/YYYY
-    DD-MM-YYYY
-    Excel Date
-    مع إزالة جميع الرموز المخفية واتجاهات النص
+    تحويل التواريخ مثل:
+    25/08/2025
+    25-08-2025
+    Excel datetime
+    Excel serial date
+
+    مع تنظيف رموز RTL/LTR المخفية.
     """
 
-    # إذا العمود أصلاً مقروء كتاريخ من Excel
+    # إذا Excel قرأ العمود كتاريخ فعلي
     if pd.api.types.is_datetime64_any_dtype(series):
         return pd.to_datetime(series, errors="coerce")
 
     # تحويل إلى نص
     cleaned = series.astype("string")
 
-    # إزالة جميع Unicode direction/control characters
+    # =====================================================
+    # إزالة الرموز المخفية
+    # بدون Regex لتجنب مشكلة PyArrow
+    # =====================================================
+    hidden_chars = [
+        "\u200e",  # LTR mark
+        "\u200f",  # RTL mark
+        "\u202a",  # LTR embedding
+        "\u202b",  # RTL embedding
+        "\u202c",  # pop directional formatting
+        "\u202d",
+        "\u202e",
+        "\u2066",
+        "\u2067",
+        "\u2068",
+        "\u2069",
+        "\ufeff",
+    ]
+
+    for char in hidden_chars:
+        cleaned = cleaned.str.replace(
+            char,
+            "",
+            regex=False
+        )
+
     cleaned = (
         cleaned
-        .str.replace(
-            r"[\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\ufeff]",
-            "",
-            regex=True
-        )
         .str.replace("\xa0", " ", regex=False)
         .str.strip()
     )
 
     # القيم الفارغة
     cleaned = cleaned.replace(
-        ["", "nan", "NaN", "None", "<NA>", "NaT"],
+        [
+            "",
+            "nan",
+            "NaN",
+            "None",
+            "<NA>",
+            "NaT"
+        ],
         pd.NA
     )
 
+    # النتيجة النهائية
     result = pd.Series(
         pd.NaT,
         index=series.index,
@@ -79,39 +109,42 @@ def convert_date_column(series):
     )
 
     # =====================================================
-    # DD/MM/YYYY
+    # 1. DD/MM/YYYY
     # مثال: 25/08/2025
     # =====================================================
     mask_slash = cleaned.str.match(
-        r"^\d{1,2}/\d{1,2}/\d{4}$",
+        r"^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$",
         na=False
     )
 
-    result.loc[mask_slash] = pd.to_datetime(
-        cleaned.loc[mask_slash],
-        format="%d/%m/%Y",
-        errors="coerce"
-    )
+    if mask_slash.any():
+        result.loc[mask_slash] = pd.to_datetime(
+            cleaned.loc[mask_slash],
+            format="%d/%m/%Y",
+            errors="coerce"
+        )
 
     # =====================================================
-    # DD-MM-YYYY
+    # 2. DD-MM-YYYY
     # =====================================================
     mask_dash = (
         result.isna()
         & cleaned.str.match(
-            r"^\d{1,2}-\d{1,2}-\d{4}$",
+            r"^[0-9]{1,2}-[0-9]{1,2}-[0-9]{4}$",
             na=False
         )
     )
 
-    result.loc[mask_dash] = pd.to_datetime(
-        cleaned.loc[mask_dash],
-        format="%d-%m-%Y",
-        errors="coerce"
-    )
+    if mask_dash.any():
+        result.loc[mask_dash] = pd.to_datetime(
+            cleaned.loc[mask_dash],
+            format="%d-%m-%Y",
+            errors="coerce"
+        )
 
     # =====================================================
-    # Excel Serial Date
+    # 3. Excel Serial Date
+    # مثال: 45894
     # =====================================================
     numeric_dates = pd.to_numeric(
         cleaned,
@@ -124,24 +157,40 @@ def convert_date_column(series):
         & numeric_dates.between(20000, 80000)
     )
 
-    result.loc[excel_mask] = pd.to_datetime(
-        numeric_dates.loc[excel_mask],
-        unit="D",
-        origin="1899-12-30",
-        errors="coerce"
-    )
-
-    # =====================================================
-    # Fallback
-    # =====================================================
-    remaining = result.isna() & cleaned.notna()
-
-    if remaining.any():
-        result.loc[remaining] = pd.to_datetime(
-            cleaned.loc[remaining],
-            dayfirst=True,
+    if excel_mask.any():
+        result.loc[excel_mask] = pd.to_datetime(
+            numeric_dates.loc[excel_mask],
+            unit="D",
+            origin="1899-12-30",
             errors="coerce"
         )
+
+    # =====================================================
+    # 4. محاولة أخيرة لأي صيغة أخرى
+    # =====================================================
+    remaining = (
+        result.isna()
+        & cleaned.notna()
+    )
+
+    if remaining.any():
+
+        try:
+            fallback = pd.to_datetime(
+                cleaned.loc[remaining],
+                format="mixed",
+                dayfirst=True,
+                errors="coerce"
+            )
+
+        except (TypeError, ValueError):
+            fallback = pd.to_datetime(
+                cleaned.loc[remaining],
+                dayfirst=True,
+                errors="coerce"
+            )
+
+        result.loc[remaining] = fallback
 
     return result
 # =========================================================
