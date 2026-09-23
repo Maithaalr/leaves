@@ -8,11 +8,11 @@ import plotly.express as px
 # =========================================================
 st.set_page_config(
     page_title="تحليل الإجازات والأذونات",
-    page_icon="",
+    page_icon="📊",
     layout="wide"
 )
 
-st.title(" لوحة تحليل الإجازات والأذونات")
+st.title("📊 لوحة تحليل الإجازات والأذونات")
 st.caption("تحليل بيانات الإجازات والأذونات للدوائر الحكومية")
 
 
@@ -40,83 +40,32 @@ def clean_text_series(series):
 # =========================================================
 def convert_date_column(series):
     """
-    تحويل التواريخ مثل:
-    25/08/2025
-    25-08-2025
-    Excel datetime
-    Excel serial date
-
-    مع تنظيف رموز RTL/LTR المخفية.
+    يدعم DD/MM/YYYY و DD-MM-YYYY وExcel dates،
+    مع إزالة رموز اتجاه النص المخفية بدون Regex لتجنب PyArrow ArrowInvalid.
     """
-
-    # إذا Excel قرأ العمود كتاريخ فعلي
     if pd.api.types.is_datetime64_any_dtype(series):
         return pd.to_datetime(series, errors="coerce")
 
-    # تحويل إلى نص
     cleaned = series.astype("string")
 
-    # =====================================================
-    # إزالة الرموز المخفية
-    # بدون Regex لتجنب مشكلة PyArrow
-    # =====================================================
     hidden_chars = [
-        "\u200e",  # LTR mark
-        "\u200f",  # RTL mark
-        "\u202a",  # LTR embedding
-        "\u202b",  # RTL embedding
-        "\u202c",  # pop directional formatting
-        "\u202d",
-        "\u202e",
-        "\u2066",
-        "\u2067",
-        "\u2068",
-        "\u2069",
-        "\ufeff",
+        "\u200e", "\u200f", "\u202a", "\u202b", "\u202c",
+        "\u202d", "\u202e", "\u2066", "\u2067", "\u2068",
+        "\u2069", "\ufeff"
     ]
-
     for char in hidden_chars:
-        cleaned = cleaned.str.replace(
-            char,
-            "",
-            regex=False
-        )
+        cleaned = cleaned.str.replace(char, "", regex=False)
 
-    cleaned = (
-        cleaned
-        .str.replace("\xa0", " ", regex=False)
-        .str.strip()
-    )
-
-    # القيم الفارغة
+    cleaned = cleaned.str.replace("\xa0", " ", regex=False).str.strip()
     cleaned = cleaned.replace(
-        [
-            "",
-            "nan",
-            "NaN",
-            "None",
-            "<NA>",
-            "NaT"
-        ],
-        pd.NA
+        ["", "nan", "NaN", "None", "<NA>", "NaT"], pd.NA
     )
 
-    # النتيجة النهائية
-    result = pd.Series(
-        pd.NaT,
-        index=series.index,
-        dtype="datetime64[ns]"
-    )
+    result = pd.Series(pd.NaT, index=series.index, dtype="datetime64[ns]")
 
-    # =====================================================
-    # 1. DD/MM/YYYY
-    # مثال: 25/08/2025
-    # =====================================================
     mask_slash = cleaned.str.match(
-        r"^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$",
-        na=False
+        r"^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$", na=False
     )
-
     if mask_slash.any():
         result.loc[mask_slash] = pd.to_datetime(
             cleaned.loc[mask_slash],
@@ -124,17 +73,12 @@ def convert_date_column(series):
             errors="coerce"
         )
 
-    # =====================================================
-    # 2. DD-MM-YYYY
-    # =====================================================
     mask_dash = (
         result.isna()
         & cleaned.str.match(
-            r"^[0-9]{1,2}-[0-9]{1,2}-[0-9]{4}$",
-            na=False
+            r"^[0-9]{1,2}-[0-9]{1,2}-[0-9]{4}$", na=False
         )
     )
-
     if mask_dash.any():
         result.loc[mask_dash] = pd.to_datetime(
             cleaned.loc[mask_dash],
@@ -142,21 +86,12 @@ def convert_date_column(series):
             errors="coerce"
         )
 
-    # =====================================================
-    # 3. Excel Serial Date
-    # مثال: 45894
-    # =====================================================
-    numeric_dates = pd.to_numeric(
-        cleaned,
-        errors="coerce"
-    )
-
+    numeric_dates = pd.to_numeric(cleaned, errors="coerce")
     excel_mask = (
         result.isna()
         & numeric_dates.notna()
         & numeric_dates.between(20000, 80000)
     )
-
     if excel_mask.any():
         result.loc[excel_mask] = pd.to_datetime(
             numeric_dates.loc[excel_mask],
@@ -165,16 +100,8 @@ def convert_date_column(series):
             errors="coerce"
         )
 
-    # =====================================================
-    # 4. محاولة أخيرة لأي صيغة أخرى
-    # =====================================================
-    remaining = (
-        result.isna()
-        & cleaned.notna()
-    )
-
+    remaining = result.isna() & cleaned.notna()
     if remaining.any():
-
         try:
             fallback = pd.to_datetime(
                 cleaned.loc[remaining],
@@ -182,17 +109,17 @@ def convert_date_column(series):
                 dayfirst=True,
                 errors="coerce"
             )
-
         except (TypeError, ValueError):
             fallback = pd.to_datetime(
                 cleaned.loc[remaining],
                 dayfirst=True,
                 errors="coerce"
             )
-
         result.loc[remaining] = fallback
 
     return result
+
+
 # =========================================================
 # CLEAN DATA
 # =========================================================
@@ -525,8 +452,8 @@ def display_permission_kpis(df):
     c1.metric("👥 مستخدمو الأذونات", f"{k['employees']:,}")
     c2.metric("📝 عدد الأذونات", f"{k['requests']:,}")
     c3.metric("⏰ إجمالي ساعات الأذونات", f"{k['total_hours']:,.2f}")
-    c4.metric("👤 متوسط الساعات لكل مستخدم", f"{k['hours_per_employee']:,.2f}")
-    c5.metric("🔁متوسط الاضن لكل مستخدم", f"{k['requests_per_employee']:,.2f}")
+    c4.metric("👤 ساعة لكل مستخدم", f"{k['hours_per_employee']:,.2f}")
+    c5.metric("🔁 إذن لكل مستخدم", f"{k['requests_per_employee']:,.2f}")
 
 
 def permission_type_analysis(df):
@@ -897,6 +824,148 @@ def display_hours_statistics(df):
 
 
 # =========================================================
+# PERMISSION TYPES BY YEAR
+# =========================================================
+def permission_types_by_year(df):
+    required = ["السنة", "اسم الاجازة او الاذن"]
+    if not all(col in df.columns for col in required):
+        return pd.DataFrame()
+
+    data = df[
+        df["السنة"].notna()
+        & df["اسم الاجازة او الاذن"].notna()
+    ].copy()
+
+    permission_mask = (
+        data["اسم الاجازة او الاذن"]
+        .astype("string")
+        .str.contains("اذن|إذن", case=False, na=False)
+    )
+    data = data[permission_mask].copy()
+
+    if data.empty:
+        return pd.DataFrame()
+
+    data = data[data["السنة"].isin([2023, 2024, 2025, 2026])].copy()
+    if data.empty:
+        return pd.DataFrame()
+
+    data["السنة"] = data["السنة"].astype(int)
+
+    if "عدد الساعات" not in data.columns:
+        data["عدد الساعات"] = 0
+
+    result = (
+        data
+        .groupby(["السنة", "اسم الاجازة او الاذن"], dropna=False)
+        .agg(
+            عدد_الأذونات=("اسم الاجازة او الاذن", "size"),
+            إجمالي_الساعات=("عدد الساعات", "sum"),
+            عدد_المستخدمين=("رقم الموظف", "nunique")
+        )
+        .reset_index()
+    )
+
+    result.columns = [
+        "السنة", "نوع الإذن", "عدد الأذونات",
+        "إجمالي الساعات", "عدد المستخدمين"
+    ]
+
+    result["متوسط ساعات الإذن"] = (
+        result["إجمالي الساعات"]
+        / result["عدد الأذونات"].replace(0, pd.NA)
+    ).fillna(0).round(2)
+
+    return result.sort_values(["السنة", "عدد الأذونات"])
+
+
+def display_permission_types_by_year(df, chart_key):
+    st.subheader("📆 تحليل أنواع الأذونات حسب السنة")
+    analysis = permission_types_by_year(df)
+
+    if analysis.empty:
+        st.info("لا توجد بيانات أذونات مرتبطة بالسنوات.")
+        return
+
+    count_pivot = (
+        analysis
+        .pivot_table(
+            index="السنة",
+            columns="نوع الإذن",
+            values="عدد الأذونات",
+            aggfunc="sum",
+            fill_value=0
+        )
+        .reset_index()
+    )
+    permission_columns = [c for c in count_pivot.columns if c != "السنة"]
+    count_pivot["الإجمالي"] = count_pivot[permission_columns].sum(axis=1)
+
+    st.markdown("**عدد الأذونات حسب النوع والسنة**")
+    st.dataframe(count_pivot, use_container_width=True, hide_index=True)
+
+    fig = px.bar(
+        analysis,
+        x="السنة",
+        y="عدد الأذونات",
+        color="نوع الإذن",
+        barmode="group",
+        text="عدد الأذونات"
+    )
+    fig.update_layout(
+        xaxis_title="السنة",
+        yaxis_title="عدد الأذونات",
+        legend_title="نوع الإذن",
+        xaxis=dict(
+            tickmode="array",
+            tickvals=sorted(analysis["السنة"].unique().tolist())
+        )
+    )
+    fig.update_traces(textposition="outside")
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
+
+    st.markdown("**ساعات الأذونات حسب النوع والسنة**")
+    hours_pivot = (
+        analysis
+        .pivot_table(
+            index="السنة",
+            columns="نوع الإذن",
+            values="إجمالي الساعات",
+            aggfunc="sum",
+            fill_value=0
+        )
+        .reset_index()
+    )
+    hour_columns = [c for c in hours_pivot.columns if c != "السنة"]
+    hours_pivot["الإجمالي"] = hours_pivot[hour_columns].sum(axis=1)
+
+    st.dataframe(hours_pivot, use_container_width=True, hide_index=True)
+
+    fig_hours = px.bar(
+        analysis,
+        x="السنة",
+        y="إجمالي الساعات",
+        color="نوع الإذن",
+        barmode="group",
+        text_auto=".2f"
+    )
+    fig_hours.update_layout(
+        xaxis_title="السنة",
+        yaxis_title="إجمالي ساعات الأذونات",
+        legend_title="نوع الإذن",
+        xaxis=dict(
+            tickmode="array",
+            tickvals=sorted(analysis["السنة"].unique().tolist())
+        )
+    )
+    st.plotly_chart(
+        fig_hours,
+        use_container_width=True,
+        key=f"{chart_key}_hours"
+    )
+
+
+# =========================================================
 # FILE UPLOADER
 # =========================================================
 uploaded_file = st.file_uploader(
@@ -1250,6 +1319,17 @@ with tab1:
     display_years(
         df,
         chart_key="general_year_chart"
+    )
+
+
+    st.divider()
+
+    # =====================================================
+    # PERMISSION TYPES BY YEAR
+    # =====================================================
+    display_permission_types_by_year(
+        df,
+        chart_key="general_permission_types_by_year"
     )
 
 
